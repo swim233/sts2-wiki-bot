@@ -97,7 +97,7 @@ func parseCommand(message *models.Message) (string, string, bool) {
 	command, _, _ = strings.Cut(command, "@")
 	command = strings.ToLower(command)
 	switch command {
-	case "card", "relic", "enemy", "potion", "help":
+	case "card", "relic", "enemy", "potion", "help", "start":
 	default:
 		return "", "", false
 	}

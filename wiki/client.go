@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"image"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"log/slog"
 	"net/http"
@@ -50,8 +53,86 @@ func (c *Client) GetCard(ctx context.Context, name string) (domain.Card, error) 
 	if err != nil {
 		return domain.Card{}, err
 	}
+	if card.StarCost == "" || card.UpgradedStarCost == "" {
+		if err := c.populateCardStarCosts(ctx, &card); err != nil {
+			c.logger.Warn("解析卡牌辉星消耗失败", "event", "card_star_cost_error", "name", card.Name, "error", err)
+		}
+	}
 	c.logger.Debug("Wiki 解析成功", "event", "parse_success", "type", "card", "name", card.Name)
 	return card, nil
+}
+
+func (c *Client) populateCardStarCosts(ctx context.Context, card *domain.Card) error {
+	for index, imageURL := range card.ImageURLs {
+		if index > 1 {
+			break
+		}
+		if index == 0 && card.StarCost != "" || index == 1 && card.UpgradedStarCost != "" {
+			continue
+		}
+		cost, err := c.cardStarCost(ctx, imageURL)
+		if err != nil {
+			return err
+		}
+		if index == 0 {
+			card.StarCost = cost
+		} else {
+			card.UpgradedStarCost = cost
+		}
+	}
+	return nil
+}
+
+func (c *Client) cardStarCost(ctx context.Context, imageURL string) (string, error) {
+	parsed, err := url.Parse(imageURL)
+	if err != nil {
+		return "", fmt.Errorf("解析卡图 URL: %w", err)
+	}
+	if !parsed.IsAbs() {
+		base, _ := url.Parse(c.baseURL)
+		parsed = base.ResolveReference(parsed)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
+	if err != nil {
+		return "", fmt.Errorf("创建卡图请求: %w", err)
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("请求卡图: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("请求卡图返回 HTTP %d", resp.StatusCode)
+	}
+	cardImage, _, err := image.Decode(io.LimitReader(resp.Body, maxBodySize))
+	if err != nil {
+		return "", fmt.Errorf("解析卡图: %w", err)
+	}
+	return starCostFromCardImage(cardImage), nil
+}
+
+func starCostFromCardImage(cardImage image.Image) string {
+	bounds := cardImage.Bounds()
+	width, height := bounds.Dx(), bounds.Dy()
+	if width <= 0 || height <= 0 {
+		return ""
+	}
+	left, top := width/80, height*2/15
+	right, bottom := width/16, height*11/60
+	opaque := 0
+	for y := top; y < bottom; y++ {
+		for x := left; x < right; x++ {
+			_, _, _, alpha := cardImage.At(bounds.Min.X+x, bounds.Min.Y+y).RGBA()
+			if alpha > 0x1000 {
+				opaque++
+			}
+		}
+	}
+	area := (right - left) * (bottom - top)
+	if area > 0 && opaque*100/area >= 25 {
+		return "2"
+	}
+	return ""
 }
 
 func (c *Client) GetEnemy(ctx context.Context, name string) (domain.Enemy, error) {

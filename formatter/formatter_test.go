@@ -39,18 +39,41 @@ func TestMultilineTextPreservesLineBreaks(t *testing.T) {
 }
 
 func TestCard(t *testing.T) {
-	got := string(Card(domain.Card{Name: "打击", ID: "STRIKE", Color: "铁甲战士", Rarity: "初始", Cost: "1", Description: "造成6点伤害。", UpgradedCost: "1", UpgradedDescription: "造成9点伤害。", SourceURL: "https://example.test/wiki/打击"}))
-	for _, want := range []string{"<h1>🃏 打击</h1>", "<code>STRIKE</code>", "<li>颜色：铁甲战士</li>", "<p>造成6点伤害。</p>"} {
+	got := string(Card(domain.Card{Name: "打击", ID: "STRIKE", Character: "铁甲战士", Rarity: "初始", Cost: "1", Description: "造成6点伤害。", UpgradedCost: "1", UpgradedDescription: "造成9点伤害。", SourceURL: "https://example.test/wiki/打击"}))
+	for _, want := range []string{"<h1>🃏 打击</h1>", "<code>STRIKE</code>", "<li>角色：铁甲战士</li>", "<p>造成6点伤害。</p>"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("输出缺少 %q：%s", want, got)
 		}
 	}
 }
 
+func TestCardStarCost(t *testing.T) {
+	got := string(Card(domain.Card{
+		Name: "粒子墙", ID: "PARTICLE_WALL", Character: "储君", Rarity: "罕见",
+		Cost: "0", StarCost: "2", Description: "获得9点格挡。",
+		UpgradedCost: "0", UpgradedStarCost: "2", UpgradedDescription: "获得12点格挡。",
+		SourceURL: "https://example.test/wiki/粒子墙",
+	}))
+	if strings.Count(got, "<li>辉星：2</li>") != 2 {
+		t.Fatalf("普通与升级属性未正确显示辉星消耗：%s", got)
+	}
+}
+
+func TestCardOmitsEmptyStarCost(t *testing.T) {
+	got := string(Card(domain.Card{
+		Name: "辉光", ID: "GLOW", Character: "储君", Rarity: "普通",
+		Cost: "1", Description: "获得辉星。", UpgradedCost: "1", UpgradedDescription: "获得辉星辉星。",
+		SourceURL: "https://example.test/wiki/辉光",
+	}))
+	if strings.Contains(got, "<li>辉星：") {
+		t.Fatalf("无辉星消耗时不应显示辉星费用：%s", got)
+	}
+}
+
 func TestCardEscapesDynamicRichHTML(t *testing.T) {
 	got := string(Card(domain.Card{
-		Name: `计划</h1><script>妥当`, ID: `WELL</code>&PLANS`, Color: `静默&猎手`, Rarity: `罕见>`, Cost: `1" onclick="bad`,
-		Description: "保留<1>张牌。\n第二行", UpgradedCost: "1", UpgradedDescription: "保留2张牌。",
+		Name: `计划</h1><script>妥当`, ID: `WELL</code>&PLANS`, Character: `静默&猎手`, Rarity: `罕见>`, Cost: `1" onclick="bad`, StarCost: `<2&`,
+		Description: "保留<1>张牌。\n第二行", UpgradedCost: "1", UpgradedStarCost: `2>`, UpgradedDescription: "保留2张牌。",
 		SourceURL: `https://example.test/wiki?a=1&b="bad"`,
 	}))
 	for _, want := range []string{
@@ -59,6 +82,8 @@ func TestCardEscapesDynamicRichHTML(t *testing.T) {
 		`静默&amp;猎手`,
 		`罕见&gt;`,
 		`1&#34; onclick=&#34;bad`,
+		`<li>辉星：&lt;2&amp;</li>`,
+		`<li>辉星：2&gt;</li>`,
 		`保留&lt;1&gt;张牌。<br>第二行`,
 		`href="https://example.test/wiki?a=1&amp;b=&#34;bad&#34;"`,
 	} {

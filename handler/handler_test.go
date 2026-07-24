@@ -36,12 +36,18 @@ func testHandler(lookup LookupService) *Handler {
 }
 
 func TestHandlerHelp(t *testing.T) {
-	resp := testHandler(fakeLookup{}).Handle(context.Background(), Request{Command: "help", Args: "ignored"})
-	got := string(resp.RichHTML)
+	h := testHandler(fakeLookup{})
+	help := h.Handle(context.Background(), Request{Command: "help", Args: "ignored"})
+	got := string(help.RichHTML)
 	for _, command := range []string{"/card", "/relic", "/enemy", "/potion", "/help"} {
 		if !strings.Contains(got, command) {
 			t.Fatalf("帮助响应缺少 %q：%s", command, got)
 		}
+	}
+
+	start := h.Handle(context.Background(), Request{Command: "start", Args: "ignored"})
+	if start.RichHTML != help.RichHTML {
+		t.Fatalf("/start 响应与 /help 不同：start=%q help=%q", start.RichHTML, help.RichHTML)
 	}
 }
 
@@ -81,7 +87,7 @@ func TestHandlerEnemyAndPotion(t *testing.T) {
 }
 
 func TestHandlerSuccess(t *testing.T) {
-	lookup := fakeLookup{card: domain.Card{Name: "打击", ID: "STRIKE", Color: "铁甲战士", Rarity: "初始", Cost: "1", Description: "伤害", UpgradedCost: "1", UpgradedDescription: "更多伤害", SourceURL: "https://example.test"}}
+	lookup := fakeLookup{card: domain.Card{Name: "打击", ID: "STRIKE", Character: "铁甲战士", Rarity: "初始", Cost: "1", Description: "伤害", UpgradedCost: "1", UpgradedDescription: "更多伤害", SourceURL: "https://example.test"}}
 	resp := testHandler(lookup).Handle(context.Background(), Request{Command: "card", Args: "打击"})
 	if !strings.Contains(string(resp.RichHTML), "STRIKE") {
 		t.Fatalf("response = %+v", resp)

@@ -13,8 +13,9 @@ import (
 var whitespace = regexp.MustCompile(`[\p{Z}\s]+`)
 
 type parsedPage struct {
-	name   string
-	fields map[string]string
+	name       string
+	fields     map[string]string
+	cardImages []string
 }
 
 var fieldAliases = map[string][]string{
@@ -23,8 +24,10 @@ var fieldAliases = map[string][]string{
 	"owner":                {"所属角色"},
 	"rarity":               {"稀有度", "罕见度"},
 	"cost":                 {"耗能", "费用", "能量"},
+	"star_cost":            {"辉星", "辉星耗能", "辉星费用", "辉星消耗", "消耗辉星"},
 	"description":          {"描述", "效果"},
 	"upgraded_cost":        {"升级后耗能", "升级耗能", "升级费用", "升级后费用"},
+	"upgraded_star_cost":   {"升级后辉星", "升级后辉星耗能", "升级后辉星费用", "升级后辉星消耗"},
 	"upgraded_description": {"升级后描述", "升级描述", "升级效果", "升级后效果"},
 	"pool":                 {"所属遗物池", "遗物池"},
 	"flavor":               {"引言", "Flavortext", "风味文本"},
@@ -91,10 +94,12 @@ func parseDocument(doc *goquery.Document) (parsedPage, error) {
 			page.fields[label] = value
 		}
 		if len(cells) >= 3 {
-			upgraded := cleanText(cells[2])
+			upgraded := cleanInfoboxValue(label, cells[2])
 			switch label {
 			case "cost":
 				page.fields["upgraded_cost"] = upgraded
+			case "star_cost":
+				page.fields["upgraded_star_cost"] = upgraded
 			case "description":
 				page.fields["upgraded_description"] = upgraded
 			}
@@ -103,7 +108,37 @@ func parseDocument(doc *goquery.Document) (parsedPage, error) {
 	if page.fields["id"] == "" {
 		page.fields["id"] = infoboxID(best, page.name)
 	}
+	best.Find("img").Each(func(_ int, image *goquery.Selection) {
+		alt := strings.TrimSpace(image.AttrOr("alt", ""))
+		src := strings.TrimSpace(image.AttrOr("src", ""))
+		if src == "" || !looksLikeCardImage(alt, src) {
+			return
+		}
+		if absolute, ok := imageSource(image); ok {
+			src = absolute
+		}
+		page.cardImages = append(page.cardImages, src)
+	})
 	return page, nil
+}
+
+func imageSource(image *goquery.Selection) (string, bool) {
+	if srcset := strings.TrimSpace(image.AttrOr("srcset", "")); srcset != "" {
+		candidates := strings.Split(srcset, ",")
+		last := strings.Fields(strings.TrimSpace(candidates[len(candidates)-1]))
+		if len(last) > 0 {
+			return last[0], true
+		}
+	}
+	return "", false
+}
+
+func looksLikeCardImage(alt, src string) bool {
+	value := strings.ToLower(alt + " " + src)
+	if strings.Contains(value, "star_icon") || strings.Contains(value, "star icon") {
+		return false
+	}
+	return strings.Contains(value, ".png") && !strings.Contains(value, "icon")
 }
 
 func infoboxID(table *goquery.Selection, pageName string) string {
@@ -125,12 +160,59 @@ func infoboxID(table *goquery.Selection, pageName string) string {
 }
 
 func cleanInfoboxValue(label string, cell *goquery.Selection) string {
-	if label != "health" {
-		return cleanText(cell)
-	}
 	clone := cell.Clone()
-	clone.Find(".ascension_icon").Remove()
-	return cleanText(clone)
+	if len(clone.Nodes) > 0 {
+		clone = clone.Eq(0)
+	}
+	if label == "health" {
+		clone.Find(".ascension_icon").Remove()
+	}
+	if label != "description" && label != "upgraded_description" {
+		return cleanText(clone)
+	}
+
+	var builder strings.Builder
+	for _, node := range clone.Nodes {
+		appendDescriptionText(&builder, node)
+	}
+	return cleanString(builder.String())
+}
+
+func appendDescriptionText(builder *strings.Builder, node *html.Node) {
+	if node.Type == html.ElementNode {
+		tag := strings.ToLower(node.Data)
+		if tag == "script" || tag == "style" || tag == "noscript" || tag == "sup" {
+			return
+		}
+		if tag == "br" {
+			builder.WriteByte('\n')
+			return
+		}
+		if tag == "img" {
+			alt := normalizeLabel(nodeAttribute(node, "alt"))
+			title := normalizeLabel(nodeAttribute(node, "title"))
+			src := strings.ToLower(nodeAttribute(node, "src"))
+			if alt == "staricon.png" || title == "辉星" || strings.Contains(src, "/star_icon.png") {
+				builder.WriteString("辉星")
+			}
+			return
+		}
+	}
+	if node.Type == html.TextNode {
+		builder.WriteString(node.Data)
+	}
+	for child := node.FirstChild; child != nil; child = child.NextSibling {
+		appendDescriptionText(builder, child)
+	}
+}
+
+func nodeAttribute(node *html.Node, key string) string {
+	for _, attribute := range node.Attr {
+		if attribute.Key == key {
+			return attribute.Val
+		}
+	}
+	return ""
 }
 
 func directCells(row *goquery.Selection) []*goquery.Selection {
@@ -167,7 +249,11 @@ func cleanText(selection *goquery.Selection) string {
 	for _, node := range selection.Nodes {
 		appendNodeText(&builder, node)
 	}
-	lines := strings.Split(strings.ReplaceAll(builder.String(), "\r", ""), "\n")
+	return cleanString(builder.String())
+}
+
+func cleanString(value string) string {
+	lines := strings.Split(strings.ReplaceAll(value, "\r", ""), "\n")
 	cleaned := make([]string, 0, len(lines))
 	for _, line := range lines {
 		line = strings.TrimSpace(whitespace.ReplaceAllString(line, " "))

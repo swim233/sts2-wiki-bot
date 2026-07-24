@@ -10,7 +10,8 @@
 
 - **语言**: Go
 - **配置**: `config.toml`
-- **数据来源**: https://sts2.huijiwiki.com（HTML爬取/解析）
+- **数据来源**: https://sts2.huijiwiki.com（HTML 爬取/解析）
+- **HTTPS 抓取**: `github.com/refraction-networking/utls` 模拟浏览器 ClientHello，`golang.org/x/net/http2` 承载 HTTP/2
 - **缓存**: 本地缓存，TTL 可配置，默认 3 天
 
 ---
@@ -58,7 +59,10 @@ token = "YOUR_BOT_TOKEN_HERE"
 level = "info"   # 可选: debug, info, warn, error
 
 [cache]
-ttl_hours = 72# 缓存有效时间，单位：小时，默认 72（3天）
+ttl_hours = 72 # 缓存有效时间，单位：小时，默认 72（3 天）
+
+[wiki]
+tls_profile = "safari-16.0" # 可选：standard、chrome-133、firefox-120、safari-16.0
 ```
 
 ---
@@ -162,6 +166,80 @@ ttl_hours = 72# 缓存有效时间，单位：小时，默认 72（3天）
 
 <footer>——来源：<a href="https://sts2.huijiwiki.com">杀戮尖塔2中文维基</a></footer>
 ```
+
+---
+
+## 使用 uTLS 抓取 Wiki 内容
+
+### 使用入口
+
+- 统一通过 `wiki.NewHTTPClient(wiki.DefaultBaseURL, profile, timeout)` 创建可复用的 `*http.Client`，再将其传给 `wiki.NewClient`；不要在每次查询时创建新的 transport 或连接。
+- `main.go` 从 `wiki.tls_profile` 读取配置，调用 `wiki.ParseTLSProfile` 校验，然后创建 Wiki HTTP 客户端。默认 profile 为 `safari-16.0`。
+- 支持以下 profile：
+
+| 配置值 | 请求方式 |
+| --- | --- |
+| `standard` | 克隆 Go 的 `http.DefaultTransport`，不使用 uTLS |
+| `chrome-133` | uTLS `HelloChrome_133` + HTTP/2 |
+| `firefox-120` | uTLS `HelloFirefox_120` + HTTP/2 |
+| `safari-16.0` | 基于 uTLS `HelloSafari_16_0` 的兼容 ClientHello + HTTP/2 |
+
+初始化方式：
+
+```go
+profile, err := wiki.ParseTLSProfile(cfg.Wiki.TLSProfile)
+if err != nil {
+    return err
+}
+
+httpClient, err := wiki.NewHTTPClient(
+    wiki.DefaultBaseURL,
+    profile,
+    15*time.Second,
+)
+if err != nil {
+    return err
+}
+
+client, err := wiki.NewClient(wiki.DefaultBaseURL, httpClient, logger)
+```
+
+### 请求链路
+
+1. `wiki.Client.fetch` 使用 `url.PathEscape(name)` 构造 `/wiki/<页面名>`，并通过注入的 `http.Client` 发起请求。
+2. 浏览器 profile 由 `profileRoundTripper` 设置与 ClientHello 匹配的 `User-Agent`、`Accept` 和 `Accept-Language`，并附加 `From: sts2bot authorized crawler`；不要在 `fetch` 中另行伪造互相冲突的浏览器请求头。
+3. `newUTLSHTTP2Transport` 先通过 `net.Dialer.DialContext` 建立 TCP 连接，再用 `utls.UClient` 应用指定 ClientHello，并调用 `HandshakeContext(ctx)` 完成握手。
+4. ALPN 必须协商为 `h2`；握手成功后将 uTLS 连接交给共享的 `http2.Transport`，以复用 HTTP/2 连接。
+5. `fetch` 继续负责 HTTP 状态码分类、2 MiB 响应体上限、Cloudflare challenge 页面识别和 HTML 解析前的数据读取。
+
+### Safari 兼容 profile
+
+- `safari-16.0` 不是直接使用默认 `HelloSafari_16_0`：`safariClientHelloSpec` 保留 Safari 的证书压缩扩展，并将 TLS 版本限制为 TLS 1.2。
+- 这是针对 Wiki 当前 Cloudflare 边缘兼容性的项目级处理；如需改变版本或扩展，必须先用 live test 验证，再同步更新 `wiki/transport_test.go`。
+- 不应把该兼容策略扩散为通用 TLS 降级；Chrome 和 Firefox profile 仍允许 TLS 1.2–1.3。
+
+### 安全与运行约束
+
+- uTLS 仅用于控制 ClientHello 指纹，不代表关闭 TLS 安全校验。必须保留 `ServerName`、系统根证书验证和完整证书链校验；禁止设置 `InsecureSkipVerify`、自定义“全部接受”的校验回调或绕过证书错误。
+- uTLS profile 当前只支持 HTTPS 直连。若目标命中 `HTTP_PROXY`、`HTTPS_PROXY` 或 `ALL_PROXY`，初始化会拒绝启动；应为 Wiki 主机配置 `NO_PROXY=sts2.huijiwiki.com`，不要静默绕过代理策略。
+- 保持上下文和超时有效：TCP dial 使用 `DialContext`，TLS 握手使用 `HandshakeContext`，客户端必须设置正数 timeout。
+- HTTP/2 是浏览器 profile 的硬性要求；ALPN 未得到 `h2` 时应返回错误，不得悄悄退回 HTTP/1.1 而形成与声明 profile 不一致的网络指纹。
+- 只将该客户端用于本项目获准抓取的 Wiki；遵守站点条款、robots 规则和合理请求频率。uTLS 不用于绕过验证码、访问控制或限流；检测到 challenge、403 或 429 时按现有错误分类返回，不进行自动规避或高频重试。
+- 不记录响应正文、Cookie、授权信息或 Telegram token。日志仅记录 URL、状态码、耗时、profile 和经过归类的错误。
+
+### 修改与验证
+
+- 新增或修改 profile 时，同时更新 `ParseTLSProfile`、`config` 默认值/校验、请求头映射及测试。
+- 至少运行：
+
+```bash
+go test ./wiki ./config
+go test -race ./wiki ./config
+go vet ./...
+```
+
+- `wiki/transport_test.go` 应持续覆盖：profile 解析、自定义 ClientHello、HTTP/2 连接复用、证书拒绝、ALPN 拒绝、代理拒绝及 context 取消。
+- 需要连接真实 Wiki 的验证应放在显式启用的 live test 中，避免普通单元测试依赖外网或触发站点限流。
 
 ---
 

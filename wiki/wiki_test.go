@@ -43,6 +43,52 @@ func TestParseCard(t *testing.T) {
 	}
 }
 
+func TestParseCardStarGain(t *testing.T) {
+	card, err := parseCard(openFixture(t, "card_star_gain.html"), "辉光", "https://example.test/wiki/辉光")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if card.ID != "GLOW" || card.Character != "储君" || card.StarCost != "" || card.UpgradedStarCost != "" {
+		t.Fatalf("parseCard() = %+v", card)
+	}
+	if card.Description != "获得辉星。\n抽1张牌。\n下一回合抽1张牌。" {
+		t.Fatalf("Description = %q", card.Description)
+	}
+	if card.UpgradedDescription != "获得辉星辉星。\n抽1张牌。\n下一回合抽1张牌。" {
+		t.Fatalf("UpgradedDescription = %q", card.UpgradedDescription)
+	}
+}
+
+func TestParseCardStarCost(t *testing.T) {
+	card, err := parseCard(openFixture(t, "card_star_cost.html"), "粒子墙", "https://example.test/wiki/粒子墙")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if card.ID != "PARTICLE_WALL" || card.Cost != "0" || card.StarCost != "2" {
+		t.Fatalf("parseCard() = %+v", card)
+	}
+	if card.UpgradedCost != "0" || card.UpgradedStarCost != "2" {
+		t.Fatalf("升级后费用 = energy:%q star:%q", card.UpgradedCost, card.UpgradedStarCost)
+	}
+}
+
+func TestParseCardImages(t *testing.T) {
+	card, err := parseCard(strings.NewReader(`<!doctype html><html><body>
+<h1 id="firstHeading">粒子墙</h1><table class="infobox">
+<tr><th colspan="2">粒子墙<br>PARTICLE_WALL</th></tr>
+<tr><th>颜色</th><td>储君</td></tr><tr><th>稀有度</th><td>罕见</td></tr>
+<tr><th>耗能</th><td>0</td></tr><tr><th>描述</th><td>描述</td></tr>
+<tr><th>升级后耗能</th><td>0</td></tr><tr><th>升级后描述</th><td>升级描述</td></tr>
+<tr><th>卡图</th><td><img alt="Particle wall.png" src="/thumb.png" srcset="https://cdn.example/card.png 1.5x"></td></tr>
+</table></body></html>`), "粒子墙", "https://example.test/wiki/粒子墙")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(card.ImageURLs) != 1 || card.ImageURLs[0] != "https://cdn.example/card.png" {
+		t.Fatalf("ImageURLs = %#v", card.ImageURLs)
+	}
+}
+
 func TestParseEnemy(t *testing.T) {
 	enemy, err := parseEnemy(openFixture(t, "enemy_standard.html"), "飞蝇菌子", "https://example.test/wiki/enemy")
 	if err != nil {

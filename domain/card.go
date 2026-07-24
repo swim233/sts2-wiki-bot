@@ -4,11 +4,14 @@ package domain
 type Card struct {
 	Name                string
 	ID                  string
-	Color               string
+	Character           string
 	Rarity              string
 	Cost                string
+	StarCost            string
 	Description         string
 	UpgradedCost        string
+	UpgradedStarCost    string
 	UpgradedDescription string
+	ImageURLs           []string
 	SourceURL           string
 }

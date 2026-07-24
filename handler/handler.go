@@ -53,7 +53,7 @@ func (h *Handler) Handle(ctx context.Context, req Request) Response {
 		return h.handleEnemy(ctx, req.Args)
 	case "potion":
 		return h.handlePotion(ctx, req.Args)
-	case "help":
+	case "help", "start":
 		return Response{RichHTML: formatter.Help()}
 	default:
 		return Response{}

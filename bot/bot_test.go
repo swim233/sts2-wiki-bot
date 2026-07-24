@@ -82,21 +82,25 @@ func TestAdapterParsesCommandWithBotUsername(t *testing.T) {
 	}
 }
 
-func TestAdapterHelp(t *testing.T) {
+func TestAdapterHelpAndStart(t *testing.T) {
 	tests := []struct {
 		text   string
 		length int
+		want   string
 	}{
-		{text: "/help", length: 5},
-		{text: "/HELP", length: 5},
-		{text: "/help@sts2bot", length: 13},
+		{text: "/help", length: 5, want: "help"},
+		{text: "/HELP", length: 5, want: "help"},
+		{text: "/help@sts2bot", length: 13, want: "help"},
+		{text: "/start", length: 6, want: "start"},
+		{text: "/START", length: 6, want: "start"},
+		{text: "/start@sts2bot", length: 14, want: "start"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.text, func(t *testing.T) {
 			commandHandler := &fakeHandler{response: handler.Response{RichHTML: "help"}}
 			sender := &fakeSender{}
 			New(commandHandler, nil).handleUpdate(context.Background(), sender, commandUpdate(tt.text, tt.length))
-			if len(sender.params) != 1 || commandHandler.request.Command != "help" || commandHandler.request.Args != "" {
+			if len(sender.params) != 1 || commandHandler.request.Command != tt.want || commandHandler.request.Args != "" {
 				t.Fatalf("sent=%d request=%+v", len(sender.params), commandHandler.request)
 			}
 		})
