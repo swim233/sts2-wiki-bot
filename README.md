@@ -42,8 +42,6 @@ ttl_hours = 72
 tls_profile = "safari-16.0"
 ```
 
-`config.toml` 包含本地凭据，已被 Git 忽略，请勿提交。
-
 ## 运行
 
 ```bash
@@ -75,4 +73,3 @@ make check
 make build VERSION=0.1.0
 ```
 
-构建产物默认不会被 Git 跟踪。
