@@ -51,10 +51,10 @@ func TestParseCardStarGain(t *testing.T) {
 	if card.ID != "GLOW" || card.Character != "储君" || card.StarCost != "" || card.UpgradedStarCost != "" {
 		t.Fatalf("parseCard() = %+v", card)
 	}
-	if card.Description != "获得辉星。\n抽1张牌。\n下一回合抽1张牌。" {
+	if card.Description != "获得1辉星。\n抽1张牌。\n下一回合抽1张牌。" {
 		t.Fatalf("Description = %q", card.Description)
 	}
-	if card.UpgradedDescription != "获得辉星辉星。\n抽1张牌。\n下一回合抽1张牌。" {
+	if card.UpgradedDescription != "获得2辉星。\n抽1张牌。\n下一回合抽1张牌。" {
 		t.Fatalf("UpgradedDescription = %q", card.UpgradedDescription)
 	}
 }

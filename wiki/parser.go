@@ -11,6 +11,7 @@ import (
 )
 
 var whitespace = regexp.MustCompile(`[\p{Z}\s]+`)
+var starIconMarkers = regexp.MustCompile("\x00+")
 
 type parsedPage struct {
 	name       string
@@ -175,7 +176,13 @@ func cleanInfoboxValue(label string, cell *goquery.Selection) string {
 	for _, node := range clone.Nodes {
 		appendDescriptionText(&builder, node)
 	}
-	return cleanString(builder.String())
+	return cleanString(numberStarIcons(builder.String()))
+}
+
+func numberStarIcons(value string) string {
+	return starIconMarkers.ReplaceAllStringFunc(value, func(markers string) string {
+		return fmt.Sprintf("%d辉星", len(markers))
+	})
 }
 
 func appendDescriptionText(builder *strings.Builder, node *html.Node) {
@@ -193,7 +200,7 @@ func appendDescriptionText(builder *strings.Builder, node *html.Node) {
 			title := normalizeLabel(nodeAttribute(node, "title"))
 			src := strings.ToLower(nodeAttribute(node, "src"))
 			if alt == "staricon.png" || title == "辉星" || strings.Contains(src, "/star_icon.png") {
-				builder.WriteString("辉星")
+				builder.WriteByte(0)
 			}
 			return
 		}

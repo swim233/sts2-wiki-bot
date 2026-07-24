@@ -62,7 +62,7 @@ func TestCardStarCost(t *testing.T) {
 func TestCardOmitsEmptyStarCost(t *testing.T) {
 	got := string(Card(domain.Card{
 		Name: "辉光", ID: "GLOW", Character: "储君", Rarity: "普通",
-		Cost: "1", Description: "获得辉星。", UpgradedCost: "1", UpgradedDescription: "获得辉星辉星。",
+		Cost: "1", Description: "获得1辉星。", UpgradedCost: "1", UpgradedDescription: "获得2辉星。",
 		SourceURL: "https://example.test/wiki/辉光",
 	}))
 	if strings.Contains(got, "<li>辉星：") {
