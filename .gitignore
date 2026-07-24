@@ -1,0 +1,31 @@
+# 本地配置与敏感信息
+/config.toml
+/config.local.toml
+.env
+.env.*
+!.env.example
+
+# 本地 Claude Code 配置
+/.claude/
+
+# 项目构建产物
+/sts2bot
+/sts2bot-*
+
+# Go 构建、测试与分析产物
+*.exe
+*.test
+*.out
+coverage*.out
+*.prof
+
+# 日志与临时文件
+*.log
+*.tmp
+*.swp
+*~
+.DS_Store
+
+# IDE 配置
+.idea/
+.vscode/
