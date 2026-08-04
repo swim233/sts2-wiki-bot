@@ -2,14 +2,13 @@ package handler
 
 import (
 	"context"
-	"errors"
 	"io"
 	"log/slog"
 	"strings"
 	"testing"
 
 	"sts2bot/domain"
-	"sts2bot/wiki"
+	"sts2bot/service"
 )
 
 type fakeLookup struct {
@@ -59,7 +58,7 @@ func TestHandlerUsage(t *testing.T) {
 }
 
 func TestHandlerNotFound(t *testing.T) {
-	err := &wiki.Error{Kind: wiki.KindNotFound, Err: errors.New("404")}
+	err := service.ErrNotFound
 	resp := testHandler(fakeLookup{err: err}).Handle(context.Background(), Request{Command: "relic", Args: "不存在"})
 	if !strings.Contains(string(resp.RichHTML), "未找到") || !strings.Contains(string(resp.RichHTML), "不存在") {
 		t.Fatalf("response = %+v", resp)
@@ -67,7 +66,7 @@ func TestHandlerNotFound(t *testing.T) {
 }
 
 func TestHandlerEscapesRichHTMLInQueryName(t *testing.T) {
-	err := &wiki.Error{Kind: wiki.KindNotFound, Err: errors.New("404")}
+	err := service.ErrNotFound
 	resp := testHandler(fakeLookup{err: err}).Handle(context.Background(), Request{Command: "card", Args: `坏</b><script>&名字`})
 	got := string(resp.RichHTML)
 	if !strings.Contains(got, `坏&lt;/b&gt;&lt;script&gt;&amp;名字`) || strings.Contains(got, "<script>") {

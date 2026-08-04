@@ -3,6 +3,7 @@ package wiki
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"sts2bot/domain"
 )
@@ -13,7 +14,7 @@ func parseCard(r io.Reader, requestedName, sourceURL string) (domain.Card, error
 		return domain.Card{}, err
 	}
 	card := domain.Card{
-		Name:                firstNonEmpty(page.name, requestedName),
+		Name:                canonicalEntityName(page.name, requestedName),
 		ID:                  page.fields["id"],
 		Character:           firstNonEmpty(page.fields["color"], page.fields["owner"]),
 		Rarity:              page.fields["rarity"],
@@ -26,15 +27,30 @@ func parseCard(r io.Reader, requestedName, sourceURL string) (domain.Card, error
 		ImageURLs:           page.cardImages,
 		SourceURL:           sourceURL,
 	}
-	missing := missingFields(map[string]string{
+	required := map[string]string{
 		"卡牌名称": card.Name, "英文 ID": card.ID, "角色": card.Character,
 		"稀有度": card.Rarity, "耗能": card.Cost, "描述": card.Description,
-		"升级后耗能": card.UpgradedCost, "升级后描述": card.UpgradedDescription,
-	})
+	}
+	if card.UpgradedCost != "" || card.UpgradedDescription != "" {
+		required["升级后耗能"] = card.UpgradedCost
+		required["升级后描述"] = card.UpgradedDescription
+	}
+	missing := missingFields(required)
 	if len(missing) > 0 {
 		return domain.Card{}, &Error{Kind: KindParse, Operation: "解析卡牌", URL: sourceURL, Missing: missing, Err: fmt.Errorf("缺少字段: %v", missing)}
 	}
 	return card, nil
+}
+func canonicalEntityName(parsedName, requestedName string) string {
+	parsedName = strings.TrimSpace(parsedName)
+	requestedName = strings.TrimSpace(requestedName)
+	if parsedName == "" {
+		return requestedName
+	}
+	if requestedName != parsedName && strings.HasPrefix(requestedName, parsedName+"(") {
+		return requestedName
+	}
+	return parsedName
 }
 
 func missingFields(fields map[string]string) []string {

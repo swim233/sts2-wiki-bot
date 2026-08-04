@@ -30,12 +30,12 @@ func parseEnemy(r io.Reader, requestedName, sourceURL string) (domain.Enemy, err
 		Notes:          page.fields["notes"],
 		SourceURL:      sourceURL,
 	}
-	enemy.Moves, enemy.BehaviorRule = enemyMoves(doc)
-	missing := missingFields(map[string]string{
-		"敌人名称": enemy.Name, "英文 ID": enemy.ID, "生命值": enemy.Health,
-		"类型": enemy.Type, "初次登场": enemy.FirstSeen,
-	})
-	if len(enemy.Moves) == 0 {
+	enemy.Moves, enemy.BehaviorRule = enemyMoves(doc, bestInfobox(doc))
+	required := map[string]string{
+		"敌人名称": enemy.Name, "英文 ID": enemy.ID, "生命值": enemy.Health, "类型": enemy.Type,
+	}
+	missing := missingFields(required)
+	if len(enemy.Moves) == 0 && enemy.FirstSeen != "" {
 		missing = append(missing, "行为")
 	}
 	if len(missing) > 0 {
@@ -59,15 +59,8 @@ func enemyIntroduction(doc *goquery.Document) string {
 	return ""
 }
 
-func enemyMoves(doc *goquery.Document) ([]domain.EnemyMove, string) {
-	var table *goquery.Selection
-	doc.Find("h2").EachWithBreak(func(_ int, heading *goquery.Selection) bool {
-		if firstLine(cleanText(heading)) != "行为" {
-			return true
-		}
-		table = heading.NextAllFiltered("table.wikitable").First()
-		return false
-	})
+func enemyMoves(doc *goquery.Document, infobox *goquery.Selection) ([]domain.EnemyMove, string) {
+	table := behaviorTableForInfobox(doc, infobox)
 	if table == nil || table.Length() == 0 {
 		return nil, ""
 	}
@@ -79,15 +72,14 @@ func enemyMoves(doc *goquery.Document) ([]domain.EnemyMove, string) {
 			return
 		}
 		cells := directCells(row)
-		if len(cells) < 3 {
+		if len(cells) < 2 {
 			return
 		}
 		name, english := splitMoveName(cleanText(cells[0]))
-		move := domain.EnemyMove{
-			Name:           name,
-			EnglishName:    english,
-			Effect:         cleanEffect(cells[1]),
-			AdvancedEffect: cleanEffect(cells[2]),
+		effect := cleanEffect(cells[1])
+		move := domain.EnemyMove{Name: name, EnglishName: english, Effect: effect, AdvancedEffect: effect}
+		if len(cells) >= 3 {
+			move.AdvancedEffect = cleanEffect(cells[2])
 		}
 		if len(cells) >= 4 {
 			sharedNotes = cleanText(cells[3])
@@ -96,6 +88,44 @@ func enemyMoves(doc *goquery.Document) ([]domain.EnemyMove, string) {
 		moves = append(moves, move)
 	})
 	return moves, sharedNotes
+}
+
+func bestInfobox(doc *goquery.Document) *goquery.Selection {
+	var best *goquery.Selection
+	bestScore := -1
+	doc.Find("table.infobox").Each(func(_ int, table *goquery.Selection) {
+		score := 0
+		table.Find("tr").Each(func(_ int, row *goquery.Selection) {
+			cells := directCells(row)
+			if len(cells) >= 2 && canonicalField(cleanText(cells[0])) != "" {
+				score++
+			}
+		})
+		if score > bestScore {
+			best, bestScore = table, score
+		}
+	})
+	return best
+}
+
+func behaviorTableForInfobox(doc *goquery.Document, infobox *goquery.Selection) *goquery.Selection {
+	if infobox == nil || infobox.Length() == 0 {
+		return nil
+	}
+	for sibling := infobox.Next(); sibling.Length() > 0; sibling = sibling.Next() {
+		if goquery.NodeName(sibling) == "table" && sibling.HasClass("infobox") {
+			break
+		}
+		if goquery.NodeName(sibling) == "table" && sibling.HasClass("wikitable") && isBehaviorTable(sibling) {
+			return sibling
+		}
+	}
+	return nil
+}
+
+func isBehaviorTable(table *goquery.Selection) bool {
+	cells := directCells(table.Find("tr").First())
+	return len(cells) >= 2 && strings.Contains(cleanText(cells[0]), "行为名称") && strings.HasPrefix(cleanText(cells[1]), "效果")
 }
 
 func splitMoveName(value string) (string, string) {

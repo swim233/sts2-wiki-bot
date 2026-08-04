@@ -14,9 +14,8 @@ import (
 	telegram "github.com/go-telegram/bot"
 
 	"sts2bot/bot"
-	"sts2bot/cache"
 	"sts2bot/config"
-	"sts2bot/domain"
+	localdata "sts2bot/data"
 	"sts2bot/handler"
 	"sts2bot/logging"
 	"sts2bot/service"
@@ -38,9 +37,9 @@ func main() {
 	slog.SetDefault(rootLogger)
 	mainLogger := rootLogger.With("module", "main")
 	wikiLogger := rootLogger.With("module", "wiki")
-	serviceLogger := rootLogger.With("module", "service")
 	handlerLogger := rootLogger.With("module", "handler")
 	botLogger := rootLogger.With("module", "bot")
+	serviceLogger := rootLogger.With("module", "service")
 	telegramLogger := rootLogger.With("module", "telegram")
 
 	tlsProfile, err := wiki.ParseTLSProfile(cfg.Wiki.TLSProfile)
@@ -48,7 +47,7 @@ func main() {
 		wikiLogger.Error("Wiki TLS profile 配置错误", "event", "wiki_tls_profile_error", "error", err)
 		os.Exit(1)
 	}
-	wikiHTTPClient, err := wiki.NewHTTPClient(wiki.DefaultBaseURL, tlsProfile, 15*time.Second)
+	wikiHTTPClient, err := wiki.NewHTTPClient(wiki.DefaultBaseURL, tlsProfile, 15*time.Second, cfg.RequestInterval())
 	if err != nil {
 		wikiLogger.Error("初始化 Wiki HTTP 客户端失败", "event", "wiki_http_init_error", "error", err)
 		os.Exit(1)
@@ -58,16 +57,24 @@ func main() {
 		wikiLogger.Error("初始化 Wiki 客户端失败", "event", "wiki_init_error", "error", err)
 		os.Exit(1)
 	}
-	lookup := service.NewLookup(
-		wikiClient,
-		cache.New[domain.Card](cfg.TTL()),
-		cache.New[domain.Relic](cfg.TTL()),
-		cache.New[domain.Enemy](cfg.TTL()),
-		cache.New[domain.Potion](cfg.TTL()),
-		serviceLogger,
-	)
+	dataStore := localdata.NewStore(cfg.Data.Directory)
+	if err := dataStore.Prepare(); err != nil {
+		mainLogger.Error("准备本地数据目录失败", "event", "data_prepare_error", "error", err)
+		os.Exit(1)
+	}
+	dataFile, initialized, err := dataStore.LoadCurrent()
+	if err != nil {
+		mainLogger.Error("加载本地数据失败", "event", "data_load_error", "error", err)
+		os.Exit(1)
+	}
+	var snapshot *service.Snapshot
+	if initialized {
+		snapshot = service.NewSnapshot(dataFile.Cards, dataFile.Relics, dataFile.Enemies, dataFile.Potions)
+	}
+	lookup := service.NewLookup(snapshot)
+	updater := service.NewUpdater(wikiClient, dataStore, lookup, serviceLogger)
 	commandHandler := handler.New(lookup, handlerLogger)
-	adapter := bot.New(commandHandler, botLogger)
+	adapter := bot.New(commandHandler, updater, cfg.Telegram.OwnerID, botLogger)
 	telegramBot, err := telegram.New(
 		cfg.Telegram.Token,
 		telegram.WithAllowedUpdates(telegram.AllowedUpdates{"message"}),
@@ -85,7 +92,7 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	mainLogger.Info("Bot 启动成功", "event", "bot_start", "version", version, "token_prefix", maskedTokenPrefix(cfg.Telegram.Token), "cache_ttl_hours", cfg.Cache.TTLHours, "wiki_tls_profile", tlsProfile)
+	mainLogger.Info("Bot 启动成功", "event", "bot_start", "version", version, "token_prefix", maskedTokenPrefix(cfg.Telegram.Token), "owner_id", cfg.Telegram.OwnerID, "data_directory", cfg.Data.Directory, "wiki_request_interval_ms", cfg.Wiki.RequestIntervalMS, "wiki_tls_profile", tlsProfile)
 	telegramBot.Start(ctx)
 	mainLogger.Info("Bot 停止", "event", "bot_stop", "reason", ctx.Err())
 }

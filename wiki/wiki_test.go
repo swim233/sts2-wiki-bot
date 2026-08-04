@@ -59,6 +59,37 @@ func TestParseCardStarGain(t *testing.T) {
 	}
 }
 
+func TestParseCardWithoutUpgrade(t *testing.T) {
+	card, err := parseCard(openFixture(t, "card_without_upgrade.html"), "伤口", "https://example.test/wiki/伤口")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if card.ID != "WOUND" || card.Character != "状态" || card.Rarity != "状态" || card.Cost != "无" || card.Description != "不能被打出。" {
+		t.Fatalf("parseCard() = %+v", card)
+	}
+	if card.UpgradedCost != "" || card.UpgradedDescription != "" {
+		t.Fatalf("不可升级卡牌不应包含升级字段: %+v", card)
+	}
+}
+
+func TestParseCardRejectsPartialUpgrade(t *testing.T) {
+	html := `<h1>坏数据</h1><table class="infobox"><tr><th>英文 ID</th><td>BAD</td></tr><tr><th>颜色</th><td>状态</td></tr><tr><th>稀有度</th><td>状态</td></tr><tr><th>耗能</th><td>无</td></tr><tr><th>描述</th><td>不能打出。</td></tr><tr><th>升级后描述</th><td>仅有描述。</td></tr></table>`
+	_, err := parseCard(strings.NewReader(html), "坏数据", "https://example.test/wiki/坏数据")
+	if err == nil || !IsKind(err, KindParse) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestParseCardPreservesDisambiguatedTitle(t *testing.T) {
+	card, err := parseCard(openFixture(t, "card_standard.html"), "打击(卡牌)", "https://example.test/wiki/打击(卡牌)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if card.Name != "打击(卡牌)" {
+		t.Fatalf("Name=%q", card.Name)
+	}
+}
+
 func TestParseCardStarCost(t *testing.T) {
 	card, err := parseCard(openFixture(t, "card_star_cost.html"), "粒子墙", "https://example.test/wiki/粒子墙")
 	if err != nil {
@@ -69,6 +100,37 @@ func TestParseCardStarCost(t *testing.T) {
 	}
 	if card.UpgradedCost != "0" || card.UpgradedStarCost != "2" {
 		t.Fatalf("升级后费用 = energy:%q star:%q", card.UpgradedCost, card.UpgradedStarCost)
+	}
+}
+func TestParseEnemyWithTwoColumnBehavior(t *testing.T) {
+	html := `<h1>好伙伴</h1><table class="infobox"><tr><th colspan="2">好伙伴<br><code>FRIEND</code></th></tr><tr><th>生命值</th><td>10</td></tr><tr><th>类型</th><td>事件</td></tr><tr><th>初次登场</th><td>事件</td></tr></table><h2>行为</h2><table class="wikitable"><tr><th>行为名称</th><th>效果</th></tr><tr><td>无<br>(Nothing)</td><td>跳过回合。</td></tr></table>`
+	enemy, err := parseEnemy(strings.NewReader(html), "好伙伴", "https://example.test/wiki/好伙伴")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(enemy.Moves) != 1 || enemy.Moves[0].Effect != "跳过回合。" || enemy.Moves[0].AdvancedEffect != "跳过回合。" {
+		t.Fatalf("enemy=%+v", enemy)
+	}
+}
+
+func TestParseIncompleteEnemyWithoutBehavior(t *testing.T) {
+	html := `<h1>建筑师</h1><table class="infobox"><tr><th colspan="2">建筑师<br><code>ARCHITECT</code></th></tr><tr><th>生命值</th><td>100</td></tr><tr><th>类型</th><td>事件</td></tr></table>`
+	enemy, err := parseEnemy(strings.NewReader(html), "建筑师", "https://example.test/wiki/建筑师")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if enemy.FirstSeen != "" || len(enemy.Moves) != 0 {
+		t.Fatalf("enemy=%+v", enemy)
+	}
+}
+
+func TestParseCompositeEnemyUsesMatchingInfoboxBehavior(t *testing.T) {
+	enemy, err := parseEnemy(openFixture(t, "enemy_composite.html"), "劫掠者团伙", "https://example.test/wiki/劫掠者团伙")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if enemy.ID != "BRUTE_RUBY_RAIDER" || enemy.Health != "30~33\n31~34" || len(enemy.Moves) != 1 || enemy.Moves[0].Name != "殴打" {
+		t.Fatalf("parseEnemy() = %+v", enemy)
 	}
 }
 

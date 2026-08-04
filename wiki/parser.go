@@ -144,17 +144,25 @@ func looksLikeCardImage(alt, src string) bool {
 
 func infoboxID(table *goquery.Selection, pageName string) string {
 	firstRow := table.Find("tr").First()
+	for _, code := range firstRow.Find("code").Map(func(_ int, selection *goquery.Selection) string { return cleanText(selection) }) {
+		if code != "" {
+			return code
+		}
+	}
 	cells := directCells(firstRow)
 	for _, cell := range cells {
-		text := cleanText(cell)
-		if text == "" || text == pageName {
-			continue
-		}
-		if remainder, found := strings.CutPrefix(text, pageName); found {
-			text = strings.TrimSpace(remainder)
-		}
-		if text != "" {
-			return text
+		lines := strings.Split(cleanText(cell), "\n")
+		for index := len(lines) - 1; index >= 0; index-- {
+			text := strings.TrimSpace(lines[index])
+			if text == "" || text == pageName {
+				continue
+			}
+			if remainder, found := strings.CutPrefix(text, pageName); found {
+				text = strings.TrimSpace(remainder)
+			}
+			if text != "" {
+				return text
+			}
 		}
 	}
 	return ""

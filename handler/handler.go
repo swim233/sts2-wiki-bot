@@ -8,7 +8,7 @@ import (
 
 	"sts2bot/domain"
 	"sts2bot/formatter"
-	"sts2bot/wiki"
+	"sts2bot/service"
 )
 
 type LookupService interface {
@@ -63,33 +63,16 @@ func (h *Handler) Handle(ctx context.Context, req Request) Response {
 func errorResponse(name string, err error) Response {
 	text := ""
 	switch {
-	case wiki.IsKind(err, wiki.KindNotFound):
+	case errors.Is(err, service.ErrUninitialized):
+		text = "❌ 本地数据尚未同步，请联系管理员执行 /update。"
+	case errors.Is(err, service.ErrNotFound):
 		text = fmt.Sprintf("❌ 未找到「%s」的相关信息，请确认名称是否正确。", name)
-	case wiki.IsKind(err, wiki.KindParse):
-		text = "❌ 数据解析失败，Wiki 页面格式可能已更新，请联系管理员。"
-	case wiki.IsKind(err, wiki.KindBlocked):
-		text = "❌ 请求失败，请稍后重试。（错误：Wiki 暂时拒绝访问）"
 	case errors.Is(err, context.DeadlineExceeded):
-		text = "❌ 请求失败，请稍后重试。（错误：请求超时）"
+		text = "❌ 本地数据查询超时，请稍后重试。"
+	case errors.Is(err, context.Canceled):
+		text = "❌ 本地数据查询已取消，请稍后重试。"
 	default:
-		text = fmt.Sprintf("❌ 请求失败，请稍后重试。（错误：%s）", safeError(err))
+		text = "❌ 本地数据不可用，请联系管理员。"
 	}
 	return Response{RichHTML: formatter.Text(text)}
-}
-
-func safeError(err error) string {
-	var wikiErr *wiki.Error
-	if errors.As(err, &wikiErr) {
-		switch wikiErr.Kind {
-		case wiki.KindRateLimited:
-			return "Wiki 请求过于频繁"
-		case wiki.KindUpstream, wiki.KindHTTPStatus:
-			return "Wiki 服务异常"
-		case wiki.KindNetwork:
-			return "网络请求失败"
-		case wiki.KindBodyTooLarge:
-			return "Wiki 响应过大"
-		}
-	}
-	return "未知错误"
 }

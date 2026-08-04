@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 
 	telegram "github.com/go-telegram/bot"
@@ -12,15 +13,23 @@ import (
 
 	"sts2bot/formatter"
 	"sts2bot/handler"
+	"sts2bot/service"
 )
 
 type fakeSender struct {
-	params []*telegram.SendRichMessageParams
-	err    error
+	params    []*telegram.SendRichMessageParams
+	edits     []*telegram.EditMessageTextParams
+	err       error
+	messageID int
 }
 
 func (f *fakeSender) SendRichMessage(_ context.Context, params *telegram.SendRichMessageParams) (*models.Message, error) {
 	f.params = append(f.params, params)
+	return &models.Message{ID: f.messageID}, f.err
+}
+
+func (f *fakeSender) EditMessageText(_ context.Context, params *telegram.EditMessageTextParams) (*models.Message, error) {
+	f.edits = append(f.edits, params)
 	return &models.Message{}, f.err
 }
 
@@ -52,7 +61,7 @@ func TestAdapterSendsRichMessage(t *testing.T) {
 	richHTML := formatter.RichHTML(`<h1>🃏 计划妥当</h1><code>WELL_LAID_PLANS</code><a href="https://example.test">来源</a>`)
 	commandHandler := &fakeHandler{response: handler.Response{RichHTML: richHTML}}
 	sender := &fakeSender{}
-	adapter := New(commandHandler, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	adapter := New(commandHandler, nil, 7, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	adapter.handleUpdate(context.Background(), sender, commandUpdate("/card 计划妥当", 5))
 
 	if len(sender.params) != 1 {
@@ -76,7 +85,7 @@ func TestAdapterSendsRichMessage(t *testing.T) {
 func TestAdapterParsesCommandWithBotUsername(t *testing.T) {
 	commandHandler := &fakeHandler{response: handler.Response{RichHTML: "ok"}}
 	sender := &fakeSender{}
-	New(commandHandler, nil).handleUpdate(context.Background(), sender, commandUpdate("/relic@sts2bot 奥利哈钢", 14))
+	New(commandHandler, nil, 7, nil).handleUpdate(context.Background(), sender, commandUpdate("/relic@sts2bot 奥利哈钢", 14))
 	if len(sender.params) != 1 || commandHandler.request.Command != "relic" || commandHandler.request.Args != "奥利哈钢" {
 		t.Fatalf("params=%d request=%+v", len(sender.params), commandHandler.request)
 	}
@@ -99,7 +108,7 @@ func TestAdapterHelpAndStart(t *testing.T) {
 		t.Run(tt.text, func(t *testing.T) {
 			commandHandler := &fakeHandler{response: handler.Response{RichHTML: "help"}}
 			sender := &fakeSender{}
-			New(commandHandler, nil).handleUpdate(context.Background(), sender, commandUpdate(tt.text, tt.length))
+			New(commandHandler, nil, 7, nil).handleUpdate(context.Background(), sender, commandUpdate(tt.text, tt.length))
 			if len(sender.params) != 1 || commandHandler.request.Command != tt.want || commandHandler.request.Args != "" {
 				t.Fatalf("sent=%d request=%+v", len(sender.params), commandHandler.request)
 			}
@@ -122,7 +131,7 @@ func TestAdapterEnemyAndPotion(t *testing.T) {
 		t.Run(tt.text, func(t *testing.T) {
 			commandHandler := &fakeHandler{response: handler.Response{RichHTML: "ok"}}
 			sender := &fakeSender{}
-			New(commandHandler, nil).handleUpdate(context.Background(), sender, commandUpdate(tt.text, tt.length))
+			New(commandHandler, nil, 7, nil).handleUpdate(context.Background(), sender, commandUpdate(tt.text, tt.length))
 			if len(sender.params) != 1 || commandHandler.request.Command != tt.want || commandHandler.request.Args != tt.args {
 				t.Fatalf("sent=%d request=%+v", len(sender.params), commandHandler.request)
 			}
@@ -139,7 +148,7 @@ func TestAdapterIgnoresUnsupportedUpdates(t *testing.T) {
 	}
 	for _, update := range tests {
 		sender := &fakeSender{}
-		New(&fakeHandler{}, nil).handleUpdate(context.Background(), sender, update)
+		New(&fakeHandler{}, nil, 7, nil).handleUpdate(context.Background(), sender, update)
 		if len(sender.params) != 0 {
 			t.Fatalf("update %+v 被意外发送", update)
 		}
@@ -149,8 +158,73 @@ func TestAdapterIgnoresUnsupportedUpdates(t *testing.T) {
 func TestAdapterHandlesSendError(t *testing.T) {
 	sender := &fakeSender{err: errors.New("发送失败")}
 	commandHandler := &fakeHandler{response: handler.Response{RichHTML: "ok"}}
-	New(commandHandler, slog.New(slog.NewTextHandler(io.Discard, nil))).handleUpdate(context.Background(), sender, commandUpdate("/card 打击", 5))
+	New(commandHandler, nil, 7, slog.New(slog.NewTextHandler(io.Discard, nil))).handleUpdate(context.Background(), sender, commandUpdate("/card 打击", 5))
 	if len(sender.params) != 1 {
 		t.Fatalf("发送次数 = %d", len(sender.params))
+	}
+}
+
+type fakeUpdater struct {
+	acquired bool
+	runs     int
+}
+
+func (f *fakeUpdater) TryAcquire() bool {
+	if f.acquired {
+		return false
+	}
+	f.acquired = true
+	return true
+}
+func (f *fakeUpdater) Release() { f.acquired = false }
+func (f *fakeUpdater) Run(_ context.Context, report func(service.UpdateProgress)) (service.UpdateSummary, error) {
+	f.runs++
+	report(service.UpdateProgress{Stage: service.StageFetching, Counts: service.UpdateCounts{Cards: service.KindProgress{Total: 1}}})
+	report(service.UpdateProgress{Stage: service.StageCompleted, Counts: service.UpdateCounts{Cards: service.KindProgress{Total: 1, Completed: 1, Succeeded: 1}}})
+	return service.UpdateSummary{Published: true}, nil
+}
+
+func TestUpdateRequiresOwner(t *testing.T) {
+	updater := &fakeUpdater{}
+	sender := &fakeSender{}
+	New(&fakeHandler{}, updater, 99, nil).handleUpdate(context.Background(), sender, commandUpdate("/update", 7))
+	if updater.runs != 0 || len(sender.params) != 1 || !strings.Contains(sender.params[0].RichMessage.HTML, "Bot Owner") {
+		t.Fatalf("runs=%d params=%+v", updater.runs, sender.params)
+	}
+}
+
+func TestOwnerUpdateEditsSameMessage(t *testing.T) {
+	updater := &fakeUpdater{}
+	sender := &fakeSender{messageID: 77}
+	New(&fakeHandler{}, updater, 7, nil).handleUpdate(context.Background(), sender, commandUpdate("/update", 7))
+	if updater.runs != 1 || len(sender.params) != 1 || len(sender.edits) < 2 {
+		t.Fatalf("runs=%d sends=%d edits=%d", updater.runs, len(sender.params), len(sender.edits))
+	}
+	for _, edit := range sender.edits {
+		if edit.ChatID != int64(99) || edit.MessageID != 77 {
+			t.Fatalf("edit=%+v", edit)
+		}
+	}
+}
+
+func TestConcurrentUpdateRejected(t *testing.T) {
+	updater := &fakeUpdater{acquired: true}
+	sender := &fakeSender{}
+	New(&fakeHandler{}, updater, 7, nil).handleUpdate(context.Background(), sender, commandUpdate("/update", 7))
+	if updater.runs != 0 || len(sender.params) != 1 || !strings.Contains(sender.params[0].RichMessage.HTML, "正在进行中") {
+		t.Fatalf("runs=%d params=%+v", updater.runs, sender.params)
+	}
+}
+
+func TestProgressSkipsIdenticalContent(t *testing.T) {
+	updater := &fakeUpdater{}
+	sender := &fakeSender{messageID: 77}
+	New(&fakeHandler{}, updater, 7, nil).handleUpdate(context.Background(), sender, commandUpdate("/update", 7))
+	for index := 1; index < len(sender.edits); index++ {
+		previous := sender.edits[index-1].RichMessage.HTML
+		current := sender.edits[index].RichMessage.HTML
+		if previous == current {
+			t.Fatalf("duplicate edit content at %d: %q", index, current)
+		}
 	}
 }

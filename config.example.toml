@@ -1,11 +1,13 @@
 [telegram]
 token = "YOUR_BOT_TOKEN_HERE"
+owner_id = 123456789
 
 [log]
 level = "info"
 
-[cache]
-ttl_hours = 72
+[data]
+directory = "data"
 
 [wiki]
 tls_profile = "safari-16.0"
+request_interval_ms = 1000

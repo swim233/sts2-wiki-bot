@@ -20,16 +20,18 @@ func writeConfig(t *testing.T, content string) string {
 func TestLoad(t *testing.T) {
 	path := writeConfig(t, `[telegram]
 token = "123456:token"
+owner_id = 42
 `)
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if cfg.Log.Level != "info" || cfg.Cache.TTLHours != 72 || cfg.Wiki.TLSProfile != "safari-16.0" {
+	wantData := filepath.Join(filepath.Dir(path), "data")
+	if cfg.Log.Level != "info" || cfg.Data.Directory != wantData || cfg.Wiki.TLSProfile != "safari-16.0" || cfg.Wiki.RequestIntervalMS != 1000 {
 		t.Fatalf("默认值错误: %+v", cfg)
 	}
-	if cfg.TTL() != 72*time.Hour {
-		t.Fatalf("TTL() = %v", cfg.TTL())
+	if cfg.RequestInterval() != time.Second {
+		t.Fatalf("RequestInterval() = %v", cfg.RequestInterval())
 	}
 }
 
@@ -40,19 +42,26 @@ func TestLoadValidation(t *testing.T) {
 		want    string
 	}{
 		{"占位 token", `[telegram]
-token = "YOUR_BOT_TOKEN_HERE"`, "telegram.token"},
+token = "YOUR_BOT_TOKEN_HERE"
+owner_id = 1`, "telegram.token"},
+		{"非法 owner", `[telegram]
+token = "x"
+owner_id = 0`, "owner_id"},
 		{"非法日志级别", `[telegram]
 token = "x"
+owner_id = 1
 [log]
 level = "trace"`, "log.level"},
-		{"非正数 TTL", `[telegram]
+		{"非正请求间隔", `[telegram]
 token = "x"
-[cache]
-ttl_hours = 0`, "ttl_hours"},
+owner_id = 1
+[wiki]
+request_interval_ms = 0`, "request_interval_ms"},
 		{"未知字段", `[telegram]
 token = "x"
-[cache]
-ttl_hour = 5`, "未知字段"},
+owner_id = 1
+[data]
+directry = "data"`, "未知字段"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

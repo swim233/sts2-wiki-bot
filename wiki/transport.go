@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	utls "github.com/refraction-networking/utls"
@@ -40,15 +41,21 @@ func (t profileRoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 	switch t.profile {
 	case TLSProfileSafari160:
 		clone.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Safari/605.1.15")
-		clone.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+		if clone.Header.Get("Accept") == "" {
+			clone.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+		}
 		clone.Header.Set("Accept-Language", "zh-CN,zh-Hans;q=0.9")
 	case TLSProfileFirefox120:
 		clone.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0")
-		clone.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+		if clone.Header.Get("Accept") == "" {
+			clone.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+		}
 		clone.Header.Set("Accept-Language", "zh-CN,zh;q=0.9")
 	case TLSProfileChrome133:
 		clone.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36")
-		clone.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+		if clone.Header.Get("Accept") == "" {
+			clone.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+		}
 		clone.Header.Set("Accept-Language", "zh-CN,zh;q=0.9")
 	}
 	clone.Header.Set("From", "sts2bot authorized crawler")
@@ -66,9 +73,17 @@ func ParseTLSProfile(value string) (TLSProfile, error) {
 	}
 }
 
-// NewHTTPClient 创建使用指定 TLS profile 的可复用 HTTP 客户端。
-func NewHTTPClient(baseURL string, profile TLSProfile, timeout time.Duration) (*http.Client, error) {
-	return newHTTPClient(baseURL, profile, timeout, nil, nil, http.ProxyFromEnvironment)
+// NewHTTPClient 创建使用指定 TLS profile 和请求间隔的可复用 HTTP 客户端。
+func NewHTTPClient(baseURL string, profile TLSProfile, timeout, requestInterval time.Duration) (*http.Client, error) {
+	client, err := newHTTPClient(baseURL, profile, timeout, nil, nil, http.ProxyFromEnvironment)
+	if err != nil {
+		return nil, err
+	}
+	if requestInterval <= 0 {
+		return nil, fmt.Errorf("Wiki 请求间隔必须大于 0")
+	}
+	client.Transport = &intervalTransport{base: client.Transport, interval: requestInterval}
+	return client, nil
 }
 
 func newHTTPClient(baseURL string, profile TLSProfile, timeout time.Duration, roots *x509.CertPool, dial dialContextFunc, proxy proxyFunc) (*http.Client, error) {
@@ -122,6 +137,34 @@ func newHTTPClient(baseURL string, profile TLSProfile, timeout time.Duration, ro
 	default:
 		return nil, fmt.Errorf("不支持的 Wiki TLS profile %q", profile)
 	}
+}
+
+type intervalTransport struct {
+	base     http.RoundTripper
+	interval time.Duration
+	mu       sync.Mutex
+	next     time.Time
+}
+
+func (t *intervalTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	t.mu.Lock()
+	now := time.Now()
+	waitFor := t.next.Sub(now)
+	if waitFor > 0 {
+		timer := time.NewTimer(waitFor)
+		select {
+		case <-timer.C:
+		case <-req.Context().Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			t.mu.Unlock()
+			return nil, req.Context().Err()
+		}
+	}
+	t.next = time.Now().Add(t.interval)
+	t.mu.Unlock()
+	return t.base.RoundTrip(req)
 }
 
 func safariClientHelloSpec(includeCertCompression bool, minVersion, maxVersion uint16) (utls.ClientHelloSpec, error) {

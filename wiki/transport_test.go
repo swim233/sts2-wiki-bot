@@ -75,14 +75,15 @@ func TestSafariSpecWithoutCompression(t *testing.T) {
 }
 
 func TestStandardHTTPClient(t *testing.T) {
-	client, err := NewHTTPClient("https://example.test", TLSProfileStandard, 3*time.Second)
+	client, err := NewHTTPClient("https://example.test", TLSProfileStandard, 3*time.Second, time.Millisecond)
 	if err != nil {
 		t.Fatal(err)
 	}
-	transport, ok := client.Transport.(*http.Transport)
+	interval, ok := client.Transport.(*intervalTransport)
 	if !ok {
 		t.Fatalf("Transport = %T", client.Transport)
 	}
+	transport, ok := interval.base.(*http.Transport)
 	if transport == http.DefaultTransport || transport.Proxy == nil || client.Timeout != 3*time.Second {
 		t.Fatalf("标准客户端未正确 clone: %+v", client)
 	}

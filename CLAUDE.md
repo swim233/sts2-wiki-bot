@@ -2,7 +2,7 @@
 
 ## 项目概述
 
-使用 Go 语言开发一个 Telegram Bot，从杀戮尖塔2中文维基（https://sts2.huijiwiki.com）抓取数据，支持卡牌、遗物、敌人和药水查询，并提供 `/help` 帮助。
+使用 Go 语言开发一个 Telegram Bot，从杀戮尖塔2中文维基（<https://sts2.huijiwiki.com>）抓取数据，支持卡牌、遗物、敌人和药水查询，并提供 `/help` 帮助。
 
 ---
 
@@ -10,9 +10,9 @@
 
 - **语言**: Go
 - **配置**: `config.toml`
-- **数据来源**: https://sts2.huijiwiki.com（HTML 爬取/解析）
+- **数据来源**: `<data.directory>/wiki.toml`；仅 owner `/update` 从 <https://sts2.huijiwiki.com> 批量同步
 - **HTTPS 抓取**: `github.com/refraction-networking/utls` 模拟浏览器 ClientHello，`golang.org/x/net/http2` 承载 HTTP/2
-- **缓存**: 本地缓存，TTL 可配置，默认 3 天
+- **本地存储**: schema-versioned TOML，启动时严格加载到不可变内存快照
 
 ---
 
@@ -35,8 +35,8 @@
 │   ├── client.go          # HTTP 请求封装
 │   ├── card.go            # 卡牌页面爬取与解析
 │   └── relic.go           # 遗物页面爬取与解析
-├── cache/
-│   └── cache.go           # 缓存管理（TTL 支持）
+├── data/
+│   └── store.go           # 本地 TOML 严格加载与原子发布
 ├── logging/
 │   └── handler.go         # 彩色终端 slog Handler
 └── formatter/
@@ -54,32 +54,35 @@
 ```toml
 [telegram]
 token = "YOUR_BOT_TOKEN_HERE"
+owner_id = 123456789
 
 [log]
 level = "info"   # 可选: debug, info, warn, error
 
-[cache]
-ttl_hours = 72 # 缓存有效时间，单位：小时，默认 72（3 天）
+[data]
+directory = "data" # 相对于配置文件目录
 
 [wiki]
 tls_profile = "safari-16.0" # 可选：standard、chrome-133、firefox-120、safari-16.0
+request_interval_ms = 1000 # 所有 Wiki API/详情请求的最小间隔
 ```
 
 ---
 
 ## 功能指令规范
 
-| 指令 | 用途 |
-| --- | --- |
-| `/card <卡牌名称>` | 查询卡牌 |
-| `/relic <遗物名称>` | 查询遗物 |
-| `/enemy <敌人名称>` | 查询敌人 |
-| `/potion <药水名称>` | 查询药水 |
-| `/help` | 显示全部指令及示例 |
+| 指令                 | 用途               |
+| -------------------- | ------------------ |
+| `/card <卡牌名称>`   | 查询卡牌           |
+| `/relic <遗物名称>`  | 查询遗物           |
+| `/enemy <敌人名称>`  | 查询敌人           |
+| `/potion <药水名称>` | 查询药水           |
+| `/help`              | 显示全部指令及示例 |
+| `/update`            | Owner 批量同步数据 |
 
 ### `/help`
 
-**描述**：显示全部可用指令、用途和示例。该指令不需要参数，不请求 Wiki，也不使用缓存；通过 Rich Message 回复原消息。
+**描述**：显示全部普通用户指令、用途和示例。该指令不需要参数，不请求 Wiki；通过 Rich Message 回复原消息。管理命令 `/update` 不在公开帮助中展示。
 
 ### `/card <卡牌名称>`
 
@@ -110,19 +113,23 @@ tls_profile = "safari-16.0" # 可选：standard、chrome-133、firefox-120、saf
 
 <h2>属性</h2>
 <ul>
-<li>颜色：铁甲战士</li>
-<li>稀有度：初始</li>
-<li>耗能：1</li>
+  <li>颜色：铁甲战士</li>
+  <li>稀有度：初始</li>
+  <li>耗能：1</li>
 </ul>
 
 <h2>📖 描述</h2>
 <p>造成6点伤害。</p>
 
 <h2>⬆️ 升级后</h2>
-<ul><li>耗能：1</li></ul>
+<ul>
+  <li>耗能：1</li>
+</ul>
 <p>造成9点伤害。</p>
 
-<footer>——来源：<a href="https://sts2.huijiwiki.com">杀戮尖塔2中文维基</a></footer>
+<footer>
+  ——来源：<a href="https://sts2.huijiwiki.com">杀戮尖塔2中文维基</a>
+</footer>
 ```
 
 ---
@@ -154,8 +161,8 @@ tls_profile = "safari-16.0" # 可选：standard、chrome-133、firefox-120、saf
 
 <h2>属性</h2>
 <ul>
-<li>所属遗物池：铁甲战士</li>
-<li>稀有度：初始</li>
+  <li>所属遗物池：铁甲战士</li>
+  <li>稀有度：初始</li>
 </ul>
 
 <h2>📖 描述</h2>
@@ -164,7 +171,9 @@ tls_profile = "safari-16.0" # 可选：standard、chrome-133、firefox-120、saf
 <h2>💬 引言</h2>
 <p>这个遗物的细节将在未来揭晓……</p>
 
-<footer>——来源：<a href="https://sts2.huijiwiki.com">杀戮尖塔2中文维基</a></footer>
+<footer>
+  ——来源：<a href="https://sts2.huijiwiki.com">杀戮尖塔2中文维基</a>
+</footer>
 ```
 
 ---
@@ -173,15 +182,15 @@ tls_profile = "safari-16.0" # 可选：standard、chrome-133、firefox-120、saf
 
 ### 使用入口
 
-- 统一通过 `wiki.NewHTTPClient(wiki.DefaultBaseURL, profile, timeout)` 创建可复用的 `*http.Client`，再将其传给 `wiki.NewClient`；不要在每次查询时创建新的 transport 或连接。
-- `main.go` 从 `wiki.tls_profile` 读取配置，调用 `wiki.ParseTLSProfile` 校验，然后创建 Wiki HTTP 客户端。默认 profile 为 `safari-16.0`。
+- 统一通过 `wiki.NewHTTPClient(wiki.DefaultBaseURL, profile, timeout, requestInterval)` 创建可复用的 `*http.Client`，再将其传给 `wiki.NewClient`；请求间隔覆盖列表 API 与详情页面。
+- `main.go` 从 `wiki.tls_profile` 和 `wiki.request_interval_ms` 读取配置。Wiki client 只注入 updater，普通查询不得访问网络。
 - 支持以下 profile：
 
-| 配置值 | 请求方式 |
-| --- | --- |
-| `standard` | 克隆 Go 的 `http.DefaultTransport`，不使用 uTLS |
-| `chrome-133` | uTLS `HelloChrome_133` + HTTP/2 |
-| `firefox-120` | uTLS `HelloFirefox_120` + HTTP/2 |
+| 配置值        | 请求方式                                                 |
+| ------------- | -------------------------------------------------------- |
+| `standard`    | 克隆 Go 的 `http.DefaultTransport`，不使用 uTLS          |
+| `chrome-133`  | uTLS `HelloChrome_133` + HTTP/2                          |
+| `firefox-120` | uTLS `HelloFirefox_120` + HTTP/2                         |
 | `safari-16.0` | 基于 uTLS `HelloSafari_16_0` 的兼容 ClientHello + HTTP/2 |
 
 初始化方式：
@@ -196,6 +205,7 @@ httpClient, err := wiki.NewHTTPClient(
     wiki.DefaultBaseURL,
     profile,
     15*time.Second,
+    cfg.RequestInterval(),
 )
 if err != nil {
     return err
@@ -206,11 +216,10 @@ client, err := wiki.NewClient(wiki.DefaultBaseURL, httpClient, logger)
 
 ### 请求链路
 
-1. `wiki.Client.fetch` 使用 `url.PathEscape(name)` 构造 `/wiki/<页面名>`，并通过注入的 `http.Client` 发起请求。
-2. 浏览器 profile 由 `profileRoundTripper` 设置与 ClientHello 匹配的 `User-Agent`、`Accept` 和 `Accept-Language`，并附加 `From: sts2bot authorized crawler`；不要在 `fetch` 中另行伪造互相冲突的浏览器请求头。
-3. `newUTLSHTTP2Transport` 先通过 `net.Dialer.DialContext` 建立 TCP 连接，再用 `utls.UClient` 应用指定 ClientHello，并调用 `HandshakeContext(ctx)` 完成握手。
-4. ALPN 必须协商为 `h2`；握手成功后将 uTLS 连接交给共享的 `http2.Transport`，以复用 HTTP/2 连接。
-5. `fetch` 继续负责 HTTP 状态码分类、2 MiB 响应体上限、Cloudflare challenge 页面识别和 HTML 解析前的数据读取。
+1. `/update` 使用 MediaWiki `embeddedin` API 枚举四类详情页，再由 `wiki.Client.fetch` 使用 `url.PathEscape(name)` 请求 `/wiki/<页面名>`。
+2. `intervalTransport` 在共享 client 范围限制所有请求开始间隔；`fetchURL` 统一处理请求头、状态码、2 MiB 上限和 challenge。
+3. 浏览器 profile 由 `profileRoundTripper` 设置与 ClientHello 匹配的请求头，并附加 `From: sts2bot authorized crawler`。
+4. uTLS transport 完成经系统根证书验证的握手；浏览器 profile 要求 ALPN `h2` 并复用连接。
 
 ### Safari 兼容 profile
 
@@ -243,13 +252,14 @@ go vet ./...
 
 ---
 
-## 缓存规范
+## 本地数据规范
 
--缓存 key 格式：`card:<名称>` 或 `relic:<名称>`
-
-- 缓存命中时直接返回，不重新请求 Wiki
-- 缓存存储：内存（`sync.Map` 或类似方案），程序重启后失效
-- TTL 从 `config.toml` 读取，精度为小时
+- 普通查询只读启动时加载的 `<data.directory>/wiki.toml` 内存快照，不在缺失时回退 Wiki。
+- `/update` 仅允许 `telegram.owner_id` 对应用户执行；全量成功并严格校验后才通过同目录临时文件 + rename 原子替换。
+- TOML 顶层 `schema_version = 1`，包含 cards、relics、enemies、potions 四个数组；未知字段、必填字段缺失、重复规范名或重复 ID 会拒绝启动/发布。
+- 同步每成功一条记录原子保存到 `wiki.update.toml`；取消/失败后下次 `/update` 从检查点继续。检查点可部分完成，只有完整数据通过严格校验后才替换 `wiki.toml`。
+- 不请求或解析卡图来推断辉星耗能；Wiki 无文本值时由维护者在 `wiki.toml` 手工填写，非储君卡牌保持为空。
+- 人工编辑后需要重启；下一次 `/update` 会覆盖人工修改。
 
 ---
 
